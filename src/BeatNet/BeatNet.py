@@ -222,8 +222,10 @@ class BeatNet:
                 audio = torchaudio.functional.resample(waveform=audio, orig_freq=sample_rate, new_freq=self.sample_rate)
                 
             feats = self.proc.process_audio(audio).T
-            feats = torch.from_numpy(feats)
-            feats = feats.unsqueeze(0).to(self.device)
+            feats = torch.permute(feats, (2, 0, 1))
+            # feats = torch.from_numpy(feats)
+            # feats = feats.unsqueeze(0).to(self.device)
+            feats = feats.to(self.device)
             preds = self.model(feats)[0]  # extracting the activations by passing the feature through the NN
             preds = self.model.final_pred(preds)
             preds = preds.cpu().detach().numpy()
