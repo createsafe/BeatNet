@@ -6,6 +6,7 @@
 # Finally, it infers beats and downbeats of the current frame/song based on one of the four performance modes and selected inference method.
 
 import os
+from typing import Iterable
 import torch
 import torchaudio
 import numpy as np
@@ -214,7 +215,7 @@ class BeatNet:
             preds = np.transpose(preds[:2, :])
         return preds
 
-    def process_offline(self, audio, sample_rate):
+    def process_offline(self, audio: Iterable, sample_rate: int) -> np.ndarray:
         with torch.no_grad():
             if sample_rate != self.sample_rate and isinstance(audio, np.ndarray):
                 audio = librosa.resample(y=audio, orig_sr=sample_rate, target_sr=self.sample_rate)
