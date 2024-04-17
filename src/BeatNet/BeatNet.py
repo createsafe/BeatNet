@@ -7,6 +7,7 @@
 
 import os
 import torch
+import torchaudio
 import numpy as np
 from madmom.features import DBNDownBeatTrackingProcessor
 from BeatNet.particle_filtering_cascade import particle_filter_cascade
@@ -213,3 +214,18 @@ class BeatNet:
             preds = np.transpose(preds[:2, :])
         return preds
 
+    def process_offline(self, audio, sample_rate):
+        with torch.no_grad():
+            if sample_rate != self.sample_rate and isinstance(audio, np.ndarray):
+                audio = librosa.resample(y=audio, orig_sr=sample_rate, target_sr=self.sample_rate)
+            elif sample_rate != self.sample_rate and isinstance(audio, torch.Tensor):
+                audio = torchaudio.functional.resample(waveform=audio, orig_freq=sample_rate, new_freq=self.sample_rate)
+                
+            feats = self.proc.process_audio(audio).T
+            feats = torch.from_numpy(feats)
+            feats = feats.unsqueeze(0).to(self.device)
+            preds = self.model(feats)[0]  # extracting the activations by passing the feature through the NN
+            preds = self.model.final_pred(preds)
+            preds = preds.cpu().detach().numpy()
+            preds = np.transpose(preds[:2, :])
+            return self.estimator(preds)
