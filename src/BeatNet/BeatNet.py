@@ -64,7 +64,7 @@ class BeatNet:
         self.log_spec_hop_length = int(20 * 0.001 * self.log_spec_sample_rate)
         self.log_spec_win_length = int(64 * 0.001 * self.log_spec_sample_rate)
         self.proc = LOG_SPECT(sample_rate=self.log_spec_sample_rate, win_length=self.log_spec_win_length,
-                             hop_size=self.log_spec_hop_length, n_bands=[24], mode = self.mode)
+                             hop_size=self.log_spec_hop_length, n_bands=[24])
         if self.inference_model == "PF":                 # instantiating a Particle Filter decoder - Is Chosen for online inference
             self.estimator = particle_filter_cascade(beats_per_bar=[], fps=50, plot=self.plot, mode=self.mode)
         elif self.inference_model == "DBN":                # instantiating an HMM decoder - Is chosen for offline inference
@@ -214,6 +214,30 @@ class BeatNet:
             preds = preds.cpu().detach().numpy()
             preds = np.transpose(preds[:2, :])
         return preds
+    
+    def process_offline(self, audio: torch.Tensor, sample_rate: int):
+        """ 
+        Arguments:
+        audio (torch.Tensor): audio signal where audio.shape = (1, N)
+        sample_rate (int): sampling frequency (32000, 44100, 48000, etc)
+        """
+
+        with torch.no_grad():
+            if sample_rate != self.sample_rate and isinstance(audio, np.ndarray):
+                audio = librosa.resample(y=audio, orig_sr=sample_rate, target_sr=self.sample_rate)
+            elif sample_rate != self.sample_rate and isinstance(audio, torch.Tensor):
+                audio = torchaudio.functional.resample(waveform=audio, orig_freq=sample_rate, new_freq=self.sample_rate)
+                
+            feats = self.proc.process_audio(audio).T
+            feats = torch.permute(feats, (2, 0, 1))
+            # feats = torch.from_numpy(feats)
+            # feats = feats.unsqueeze(0).to(self.device)
+            feats = feats.to(self.device)
+            preds = self.model(feats)[0]  # extracting the activations by passing the feature through the NN
+            preds = self.model.final_pred(preds)
+            preds = preds.cpu().detach().numpy()
+            preds = np.transpose(preds[:2, :])
+            return self.estimator(preds)
 
     def process_offline(self, audio: Iterable, sample_rate: int) -> np.ndarray:
         with torch.no_grad():
