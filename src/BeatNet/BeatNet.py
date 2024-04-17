@@ -215,6 +215,12 @@ class BeatNet:
         return preds
     
     def process_offline(self, audio: torch.Tensor, sample_rate: int):
+        """ 
+        Arguments:
+        audio (torch.Tensor): audio signal where audio.shape = (1, N)
+        sample_rate (int): sampling frequency (32000, 44100, 48000, etc)
+        """
+
         with torch.no_grad():
             if sample_rate != self.sample_rate and isinstance(audio, np.ndarray):
                 audio = librosa.resample(y=audio, orig_sr=sample_rate, target_sr=self.sample_rate)
