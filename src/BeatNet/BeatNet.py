@@ -6,7 +6,7 @@
 # Finally, it infers beats and downbeats of the current frame/song based on one of the four performance modes and selected inference method.
 
 import os
-from typing import Iterable
+from typing import Iterable, Union
 import torch
 import torchaudio
 import numpy as np
@@ -16,6 +16,7 @@ from BeatNet.log_spect import LOG_SPECT
 import librosa
 import sys
 from BeatNet.model import BDA
+from BeatNet.bpm import beats2bpm
 import pyaudio
 import matplotlib.pyplot as plt
 import time
@@ -92,7 +93,15 @@ class BeatNet:
                                              input=True,
                                              frames_per_buffer=self.log_spec_hop_length,)
                                              
-    def process(self, audio_path=None, with_bpm=False):   
+    def process(self, audio_path: str=None, with_bpm: bool=False) -> Union[np.ndarray, tuple[np.ndarray, float]]: 
+        """
+        Extract beats and optionally bpm
+
+        Arguments:
+        audio_path (str): 'path/to/audio.wav'
+        with_bpm (bool): if true, returns tuple (beats, bpm)
+                         if false, returns beats
+        """
         if self.mode == "stream":
             if self.inference_model != "PF":
                     raise RuntimeError('The infernece model should be set to "PF" for the streaming mode!')
@@ -123,7 +132,6 @@ class BeatNet:
                     else:
                         output = self.estimator.process(self.pred)  # Using particle filtering online inference to infer beat/downbeats
                     self.counter += 1
-                return output
             else:
                 raise RuntimeError('An audio object or file directory is required for the realtime usage!')
         
@@ -135,22 +143,25 @@ class BeatNet:
                 raise RuntimeError('An audio object or file directory is required for the online usage!')
             if self.inference_model == "PF":   # Particle filtering inference (causal)
                 output = self.estimator.process(preds)  # Using particle filtering online inference to infer beat/downbeats
-                return output
             elif self.inference_model == "DBN":    # Dynamic bayesian Network Inference (non-causal)
                 output = self.estimator(preds)  # Using DBN offline inference to infer beat/downbeats
-                return output
+
         
         
         elif self.mode == "offline":
-                if self.inference_model != "DBN":
-                    raise RuntimeError('The infernece model should be set to "DBN" for the offline mode!')
-                if isinstance(audio_path, str) or audio_path.all()!=None:
-                    preds = self.activation_extractor_online(audio_path)    # Using BeatNet causal Neural network to extract activations
-                    output = self.estimator(preds)  # Using DBN offline inference to infer beat/downbeats
-                    return output
-        
-                else:
-                    raise RuntimeError('An audio object or file directory is required for the offline usage!')
+            if self.inference_model != "DBN":
+                raise RuntimeError('The infernece model should be set to "DBN" for the offline mode!')
+            if isinstance(audio_path, str) or audio_path.all()!=None:
+                preds = self.activation_extractor_online(audio_path)    # Using BeatNet causal Neural network to extract activations
+                output = self.estimator(preds)  # Using DBN offline inference to infer beat/downbeats
+            else:
+                raise RuntimeError('An audio object or file directory is required for the offline usage!')
+            
+        if with_bpm:
+            bpm = beats2bpm(beats=output[:, 0])
+            return output, bpm
+        else:
+            return output
                 
 
     def activation_extractor_stream(self):
