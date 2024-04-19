@@ -226,7 +226,7 @@ class BeatNet:
             preds = np.transpose(preds[:2, :])
         return preds
 
-    def process_offline(self, audio: Iterable, sample_rate: int) -> np.ndarray:
+    def process_offline(self, audio: Iterable, sample_rate: int, with_bpm: bool=False) -> Union[np.ndarray, tuple[np.ndarray, float]]:
         with torch.no_grad():
             if sample_rate != self.sample_rate and isinstance(audio, np.ndarray):
                 audio = librosa.resample(y=audio, orig_sr=sample_rate, target_sr=self.sample_rate)
@@ -240,4 +240,10 @@ class BeatNet:
             preds = self.model.final_pred(preds)
             preds = preds.cpu().detach().numpy()
             preds = np.transpose(preds[:2, :])
-            return self.estimator(preds)
+            beats = self.estimator(preds)
+
+            if with_bpm:
+                bpm = beats2bpm(beats=beats[:, 0])
+                return beats, bpm
+            else:
+                return beats
