@@ -92,7 +92,7 @@ class BeatNet:
                                              input=True,
                                              frames_per_buffer=self.log_spec_hop_length,)
                                              
-    def process(self, audio_path=None):   
+    def process(self, audio_path=None, with_bpm=False):   
         if self.mode == "stream":
             if self.inference_model != "PF":
                     raise RuntimeError('The infernece model should be set to "PF" for the streaming mode!')
