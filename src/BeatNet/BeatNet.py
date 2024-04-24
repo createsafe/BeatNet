@@ -8,6 +8,7 @@
 import os
 from typing import Iterable
 import torch
+import torch.multiprocessing.spawn
 import torchaudio
 import numpy as np
 from madmom.features import DBNDownBeatTrackingProcessor
@@ -50,21 +51,25 @@ class BeatNet:
     '''
     
     
-    def __init__(self, model, mode='offline', inference_model='PF', plot=[], thread=False, device='cpu'):
+    def __init__(self, model, mode='offline', inference_model='PF', plot=[], thread=False, device='cpu', batch_size=1):
         self.model = model
         self.mode = mode
         self.inference_model = inference_model
         self.plot= plot
         self.thread = thread
         self.device = device
+        self.batch_size = batch_size
         if plot and thread:
             raise RuntimeError('Plotting cannot be accomplished in the threading mode')
         self.sample_rate = 22050
         self.log_spec_sample_rate = self.sample_rate
         self.log_spec_hop_length = int(20 * 0.001 * self.log_spec_sample_rate)
         self.log_spec_win_length = int(64 * 0.001 * self.log_spec_sample_rate)
-        self.proc = LOG_SPECT(sample_rate=self.log_spec_sample_rate, win_length=self.log_spec_win_length,
-                             hop_size=self.log_spec_hop_length, n_bands=[24], mode = self.mode)
+        self.proc = LOG_SPECT(sample_rate=self.log_spec_sample_rate, 
+                              win_length=self.log_spec_win_length,
+                              hop_size=self.log_spec_hop_length, 
+                              n_bands=[24], 
+                              channels=self.batch_size)
         if self.inference_model == "PF":                 # instantiating a Particle Filter decoder - Is Chosen for online inference
             self.estimator = particle_filter_cascade(beats_per_bar=[], fps=50, plot=self.plot, mode=self.mode)
         elif self.inference_model == "DBN":                # instantiating an HMM decoder - Is chosen for offline inference
@@ -111,16 +116,31 @@ class BeatNet:
 
     def process_offline(self, audio: Iterable, sample_rate: int) -> np.ndarray:
         with torch.no_grad():
-            if sample_rate != self.sample_rate and isinstance(audio, np.ndarray):
-                audio = librosa.resample(y=audio, orig_sr=sample_rate, target_sr=self.sample_rate)
-            elif sample_rate != self.sample_rate and isinstance(audio, torch.Tensor):
+            if sample_rate != self.sample_rate and isinstance(audio, torch.Tensor):
                 audio = torchaudio.functional.resample(waveform=audio, orig_freq=sample_rate, new_freq=self.sample_rate)
                 
             feats = self.proc.process_audio(audio).T
-            feats = torch.from_numpy(feats)
-            feats = feats.unsqueeze(0).to(self.device)
-            preds = self.model(feats)[0]  # extracting the activations by passing the feature through the NN
-            preds = self.model.final_pred(preds)
-            preds = preds.cpu().detach().numpy()
-            preds = np.transpose(preds[:2, :])
-            return self.estimator(preds)
+            feats = torch.permute(feats, (2, 0, 1))
+            feats = feats.to(self.device)
+
+            args = [(self.model, torch.unsqueeze(feats[i, :], dim=0), self.estimator) for i in range(feats.shape[0])]
+            with torch.multiprocessing.Pool(self.batch_size) as pool:
+                result = pool.map(func=predict, iterable=args)
+
+            # preds = predict(self.model, feats)
+
+            # preds = self.model(feats)[0]  # extracting the activations by passing the feature through the NN
+            # preds = self.model.final_pred(preds)
+
+            return result
+
+            
+
+def predict(args):
+    with torch.no_grad():
+        model, feats, estimator = args
+        preds = model(feats)[0]
+        preds = model.final_pred(preds)
+        preds = preds.cpu().detach().numpy()
+        preds = np.transpose(preds[:2, :])
+        return estimator(preds)
