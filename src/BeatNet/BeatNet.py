@@ -133,9 +133,19 @@ class BeatNet:
         else:
             raise RuntimeError(f"{self.mode} is not supported or has been deprecated. Use 'offline' to process files.")
 
-    def get_beats(self, audio: torch.Tensor, sample_rate: int) -> np.ndarray:
+    def get_beats(self, audio: Union[torch.Tensor, list[torch.Tensor]], sample_rate: int) -> np.ndarray:
 
-        if sample_rate != self.sample_rate and isinstance(audio, torch.Tensor):
+        """
+        Get beat estimates from tensors.
+
+        Arguments: 
+        audio (Tensor | Iterable[Tensor]): audio may be a [B, N] Tensor, or a list of Tensors
+        """
+
+        if isinstance(audio, list):
+            audio = zero_pad_cat(audio)
+
+        if sample_rate != self.sample_rate:
             audio = torchaudio.functional.resample(waveform=audio, orig_freq=sample_rate, new_freq=self.sample_rate)
         
         # apply preprocessing
