@@ -6,7 +6,7 @@
 # Finally, it infers beats and downbeats of the current frame/song based on one of the four performance modes and selected inference method.
 
 import os
-from typing import Iterable
+from typing import Iterable, Union
 import torch
 import torch.multiprocessing.spawn
 import torchaudio
@@ -21,6 +21,7 @@ import pyaudio
 import matplotlib.pyplot as plt
 import time
 import threading
+from BeatNet.utils import zero_pad_cat
 
 
 class BeatNet:
@@ -97,42 +98,57 @@ class BeatNet:
                                              input=True,
                                              frames_per_buffer=self.log_spec_hop_length,)
                                              
-    def process(self, audio_path=None):   
-        
+    def process(self, audio_path: Union[str, list[str]]=None):   
+        """
+        Offline beat estimation.
+
+        Arguments:
+        audio_path (str | list[str]): "path/to/audio" or list of paths to audio
+        """
+
         if self.mode == "offline":
             if self.inference_model != "DBN":
                 raise RuntimeError('The infernece model should be set to "DBN" for the offline mode!')
-            if isinstance(audio_path, str) or audio_path.all()!=None:
+            if isinstance(audio_path, str):
                 audio, sample_rate = torchaudio.load(audio_path)
                 audio = torch.unsqueeze(torch.mean(audio, dim=0), dim=0)
-                beats = self.process_offline(audio, sample_rate)
+                beats = self.get_beats(audio, sample_rate)
                 return beats
-    
+            elif all(isinstance(item, str) for item in audio_path):
+                # get all files
+                audios = list()
+                sample_rates = list()
+                for path in audio_path:
+                    audio, sample_rate = torchaudio.load(path)
+                    audio = torch.unsqueeze(torch.mean(audio, dim=0), dim=0)
+                    audios.append(audio)
+                    sample_rates.append(sample_rate)
+                if not all(sample_rates[0] == rate for rate in sample_rates):
+                    ValueError("All samplerates must be the same.")
+                audios = zero_pad_cat(audios)
+                beats = self.get_beats(audios, sample_rates[0])
+                return beats
             else:
-                raise RuntimeError('An audio object or file directory is required for the offline usage!')
-            
+                raise RuntimeError("audio_path may be a str or a list of strings")
         else:
             raise RuntimeError(f"{self.mode} is not supported or has been deprecated. Use 'offline' to process files.")
 
-    def process_offline(self, audio: Iterable, sample_rate: int) -> np.ndarray:
-        with torch.no_grad():
-            if sample_rate != self.sample_rate and isinstance(audio, torch.Tensor):
-                audio = torchaudio.functional.resample(waveform=audio, orig_freq=sample_rate, new_freq=self.sample_rate)
-                
-            feats = self.proc.process_audio(audio).T
-            feats = torch.permute(feats, (2, 0, 1))
-            feats = feats.to(self.device)
+    def get_beats(self, audio: torch.Tensor, sample_rate: int) -> np.ndarray:
 
-            args = [(self.model, torch.unsqueeze(feats[i, :], dim=0), self.estimator) for i in range(feats.shape[0])]
-            with torch.multiprocessing.Pool(self.batch_size) as pool:
-                result = pool.map(func=predict, iterable=args)
+        if sample_rate != self.sample_rate and isinstance(audio, torch.Tensor):
+            audio = torchaudio.functional.resample(waveform=audio, orig_freq=sample_rate, new_freq=self.sample_rate)
+        
+        # apply preprocessing
+        feats = self.proc.process_audio(audio).T
+        feats = torch.permute(feats, (2, 0, 1))
+        feats = feats.to(self.device)
 
-            # preds = predict(self.model, feats)
+        # apply model
+        args = [(self.model, torch.unsqueeze(feats[i, :], dim=0), self.estimator) for i in range(feats.shape[0])]
+        with torch.multiprocessing.Pool(self.batch_size) as pool:
+            result = pool.map(func=predict, iterable=args)
 
-            # preds = self.model(feats)[0]  # extracting the activations by passing the feature through the NN
-            # preds = self.model.final_pred(preds)
-
-            return result
+        return result
 
             
 
@@ -141,6 +157,8 @@ def predict(args):
         model, feats, estimator = args
         preds = model(feats)[0]
         preds = model.final_pred(preds)
+        # TODO: remove madmom dependency in DBNDownbeatTrackingProcessor
         preds = preds.cpu().detach().numpy()
         preds = np.transpose(preds[:2, :])
-        return estimator(preds)
+        estimate = estimator(preds)
+        return estimate
