@@ -98,33 +98,16 @@ class BeatNet:
             if self.inference_model != "DBN":
                 raise RuntimeError('The infernece model should be set to "DBN" for the offline mode!')
             if isinstance(audio_path, str) or audio_path.all()!=None:
-                preds = self.activation_extractor_online(audio_path)    # Using BeatNet causal Neural network to extract activations
-                output = self.estimator(preds)  # Using DBN offline inference to infer beat/downbeats
-                return output
+                audio, sample_rate = torchaudio.load(audio_path)
+                audio = torch.unsqueeze(torch.mean(audio, dim=0), dim=0)
+                beats = self.process_offline(audio, sample_rate)
+                return beats
     
             else:
                 raise RuntimeError('An audio object or file directory is required for the offline usage!')
             
         else:
             raise RuntimeError(f"{self.mode} is not supported or has been deprecated. Use 'offline' to process files.")
-
-
-    def activation_extractor_online(self, audio_path):
-        with torch.no_grad():
-            if isinstance(audio_path, str):
-            	audio, _ = librosa.load(audio_path, sr=self.sample_rate)  # reading the data
-            elif len(np.shape(audio_path))>1:
-                audio = np.mean(audio_path ,axis=1)
-            else:
-                audio = audio_path
-            feats = self.proc.process_audio(audio).T
-            feats = torch.from_numpy(feats)
-            feats = feats.unsqueeze(0).to(self.device)
-            preds = self.model(feats)[0]  # extracting the activations by passing the feature through the NN
-            preds = self.model.final_pred(preds)
-            preds = preds.cpu().detach().numpy()
-            preds = np.transpose(preds[:2, :])
-        return preds
 
     def process_offline(self, audio: Iterable, sample_rate: int) -> np.ndarray:
         with torch.no_grad():
