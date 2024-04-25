@@ -106,6 +106,11 @@ class BeatNet:
         audio_path (str | list[str]): "path/to/audio" or list of paths to audio
         """
 
+        if isinstance(audio_path, str) and (not self.batch_size == 1):
+            raise RuntimeError('If `audio_path` is to a single file, `batch_size` must be 1')
+        elif isinstance(audio_path, list):
+            assert(len(audio_path) == self.batch_size, f"Number of audio files ({len(audio_path)}) must equal `batch_size` ({self.batch_size})")
+
         if self.mode == "offline":
             if self.inference_model != "DBN":
                 raise RuntimeError('The infernece model should be set to "DBN" for the offline mode!')
