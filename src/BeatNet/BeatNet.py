@@ -17,6 +17,7 @@ from BeatNet.log_spect import LOG_SPECT
 import librosa
 import sys
 from BeatNet.model import BDA
+from BeatNet.bpm import beats2bpm
 import pyaudio
 import matplotlib.pyplot as plt
 import time
@@ -99,6 +100,7 @@ class BeatNet:
                                              input=True,
                                              frames_per_buffer=self.log_spec_hop_length,)
                                              
+
     def process(self, audio_path: Union[str, list[str]]=None):   
         """
         Offline beat estimation.
