@@ -142,11 +142,20 @@ class LOG_SPECT():
         self.fmin = fmin
         self.fmax = fmax
         self.channels = channels
+        self.unique_bins = unique_bins
         if isinstance(n_bands, Iterable):
             self.num_bands_per_octave = n_bands[0]
         else: 
             self.num_bands_per_octave = n_bands
+
+        self._build_filters(channels=self.channels)
         
+    def _build_filters(self, channels=1):
+        """
+        Change number of channels if necessary
+        """
+
+        self.channels = channels
         # get log spaced frequencies
         self.freqs = log_frequencies(bands_per_octave=self.num_bands_per_octave, 
                                      fmin=self.fmin, 
@@ -159,12 +168,16 @@ class LOG_SPECT():
                                                                  return_complex=True,
                                                                  window=torch.hann_window(self.fft_size))
         self._fft_freqs = np.linspace(0, self.sample_rate/2, self.fft_size//2)
-        self._bins = frequencies2bins(self.freqs, self._fft_freqs, unique_bins)
+        self._bins = frequencies2bins(self.freqs, self._fft_freqs, self.unique_bins)
         self._filters = triangular_filter(self.channels, self._bins, self.fft_size//2)
 
+
     def process_audio(self, signal: torch.Tensor):
-        assert len(signal.shape) == 2, "signal must have dimensions [num_channels, num_samples]"
-        assert signal.shape[0] == self.channels, f"signal has {signal.shape[0]} channels but this object has {self.channels}" 
+        assert signal.dim() == 2, "signal must have dimensions [num_channels, num_samples]"
+
+        if not signal.shape[0] == self.channels:
+            self._build_filters(channels=signal.shape[0])
+
         spectrogram = self._spectrogram_processor(signal).abs()
         spectrogram = spectrogram[:, :self.fft_size//2, :] 
         filtered = torch.matmul(self._filters, spectrogram)

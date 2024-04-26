@@ -187,6 +187,7 @@ class BeatNet:
             RuntimeError(f"`audio` is {type(audio)}, but must be `torch.Tensor` or `list[torch.Tensor]`")
 
         assert audio.dim() == 2
+        print(audio.shape)
 
         if sample_rate != self.sample_rate:
             audio = torchaudio.functional.resample(waveform=audio, orig_freq=sample_rate, new_freq=self.sample_rate)
