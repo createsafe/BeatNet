@@ -47,7 +47,7 @@ class BeatNet:
                 Note that to speedup plotting the figures, rather than new plots per frame, the previous plots get updated. However, to secure realtime results, it is recommended to not plot or have as less number of plots as possible at the time.   
             threading: To decide whether accomplish the inference at the main thread or another thread. 
             device: type of dvice. cpu or cuda:i
-            batch_size: number of inputs to process in parallel
+            batch_size: initial number of inputs to process in parallel
 
         Outputs:
             A vector including beat times and downbeat identifier columns, respectively with the following shape: numpy_array(num_beats, 2).
@@ -187,7 +187,6 @@ class BeatNet:
             RuntimeError(f"`audio` is {type(audio)}, but must be `torch.Tensor` or `list[torch.Tensor]`")
 
         assert audio.dim() == 2
-        print(audio.shape)
 
         if sample_rate != self.sample_rate:
             audio = torchaudio.functional.resample(waveform=audio, orig_freq=sample_rate, new_freq=self.sample_rate)
