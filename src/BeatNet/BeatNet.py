@@ -110,7 +110,7 @@ class BeatNet:
         if isinstance(audio_path, str) and (not self.batch_size == 1):
             raise RuntimeError('If `audio_path` is to a single file, `batch_size` must be 1')
         elif isinstance(audio_path, list):
-            assert(len(audio_path) == self.batch_size, f"Number of audio files ({len(audio_path)}) must equal `batch_size` ({self.batch_size})")
+            assert len(audio_path) == self.batch_size, f"Number of audio files ({len(audio_path)}) must equal `batch_size` ({self.batch_size})"
 
         if self.mode == "offline":
             if self.inference_model != "DBN":
@@ -139,17 +139,52 @@ class BeatNet:
         else:
             raise RuntimeError(f"{self.mode} is not supported or has been deprecated. Use 'offline' to process files.")
 
-    def get_beats(self, audio: Union[torch.Tensor, list[torch.Tensor]], sample_rate: int) -> np.ndarray:
+    def get_beats(self, audio: Union[torch.Tensor, list[torch.Tensor]], sample_rate: int, is_stereo=False) -> np.ndarray:
 
         """
         Get beat estimates from tensors.
 
         Arguments: 
         audio (Tensor | Iterable[Tensor]): audio may be a [B, N] Tensor, or a list of Tensors
+
+        processor.get_beats(BCT, input_stereo=True, sr=sr)
+        processor.get_beats(CT, input_stereo=True, sr=sr)
+        processor.get_beats(BT, sr=sr)
+        processor.get_beats(T, sr=sr)
         """
 
-        if isinstance(audio, list):
+        # Handle tensor dims
+        if isinstance(audio, torch.Tensor):
+            # BCT
+            if audio.dim() == 3:
+                buffer = torch.Tensor()
+                if is_stereo:
+                    assert audio.shape[1] % 2 == 0, f"if `audio` has shape [B,C,T], and `is_stereo` is True, `audio.shape[1]` must be even."
+                    buffer = torch.zeros(size=(audio.shape[0] * (audio.shape[1] // 2), audio.shape[2]))
+                    audio = audio.reshape(shape=(audio.shape[0] * audio.shape[1], audio.shape[2]))
+                    for n in range(0, audio.shape[0], 2):
+                        buffer[n//2, :] = torch.mean(audio[n:n+1, :])
+                    audio = buffer
+                if not is_stereo:
+                    audio = audio.reshape(shape=(audio.shape[0] * audio.shape[1], audio.shape[2]))
+            # CT
+            elif audio.dim() == 2 and is_stereo:
+                buffer = torch.zeros(size=(audio.shape[0]//2, audio.shape[1]))
+                for n in range(0, audio.shape[0], 2):
+                    buffer[n//2, :] = torch.mean(audio[n:n+1, :])
+                audio = buffer
+            # T
+            elif audio.dim() == 1:
+                audio = torch.unsqueeze(audio, dim=0)
+            elif audio.dim() > 3:
+                RuntimeError(f"`audio` must be a `torch.Tensor` with 1, 2, or 3 dimensions.")
+        # handle tensor list
+        elif isinstance(audio, list):
             audio = zero_pad_cat(audio)
+        else:
+            RuntimeError(f"`audio` is {type(audio)}, but must be `torch.Tensor` or `list[torch.Tensor]`")
+
+        assert audio.dim() == 2
 
         if sample_rate != self.sample_rate:
             audio = torchaudio.functional.resample(waveform=audio, orig_freq=sample_rate, new_freq=self.sample_rate)
