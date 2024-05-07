@@ -198,16 +198,20 @@ class BeatNet:
 
         # apply model
         args = [(self.model, torch.unsqueeze(feats[i, :], dim=0), self.estimator) for i in range(feats.shape[0])]
-        with torch.multiprocessing.Pool(self.batch_size) as pool:
-            result = pool.map(func=predict, iterable=args)
+        results = list()
+        for arg in args:
+            result = torch.multiprocessing.spawn(fn=predict, args=arg, nprocs=1, join=True, daemon=True)
+            print(result)
+        # with torch.multiprocessing.Pool(self.batch_size) as pool:
+        #     result = pool.map(func=predict, iterable=args)
 
         return result
 
             
 
-def predict(args):
+def predict(i, model, feats, estimator):
     with torch.no_grad():
-        model, feats, estimator = args
+        # model, feats, estimator = args
         preds = model(feats)[0]
         preds = model.final_pred(preds)
         # TODO: remove madmom dependency in DBNDownbeatTrackingProcessor
