@@ -11,6 +11,7 @@ import torch
 import torch.multiprocessing.spawn
 import torchaudio
 import numpy as np
+import matplotlib.pyplot as plt
 from madmom.features import DBNDownBeatTrackingProcessor
 from BeatNet.particle_filtering_cascade import particle_filter_cascade
 from BeatNet.log_spect import LOG_SPECT
@@ -197,19 +198,31 @@ class BeatNet:
         feats = feats.to(self.device)
 
         # apply model
+        # torch.multiprocessing.set_start_method('fork')
+        queue = torch.multiprocessing.Queue()
+        semaphore = torch.multiprocessing.Semaphore()
+        event = torch.multiprocessing.Event()
         args = [(self.model, torch.unsqueeze(feats[i, :], dim=0), self.estimator) for i in range(feats.shape[0])]
+        # TODO: need to share results 
+        torch.multiprocessing.spawn(fn=worker, args=(args, queue, semaphore, event), nprocs=len(args), join=True, daemon=True)
         results = list()
-        for arg in args:
-            result = torch.multiprocessing.spawn(fn=predict, args=arg, nprocs=1, join=True, daemon=True)
-            print(result)
+        while not queue.empty():
+            results.append(queue.get())
         # with torch.multiprocessing.Pool(self.batch_size) as pool:
         #     result = pool.map(func=predict, iterable=args)
+        pass
+        return 1
 
-        return result
+def worker(i, args_list, queue, semaphore, event):
+    args = args_list[i]
+    model, feats, estimator = args
+    result = predict(model, feats, estimator)
+    semaphore.acquire()
+    # queue.put(result)
+    semaphore.release()
+    event.set()
 
-            
-
-def predict(i, model, feats, estimator):
+def predict(model, feats, estimator):
     with torch.no_grad():
         # model, feats, estimator = args
         preds = model(feats)[0]
@@ -218,4 +231,5 @@ def predict(i, model, feats, estimator):
         preds = preds.cpu().detach().numpy()
         preds = np.transpose(preds[:2, :])
         estimate = estimator(preds)
+        # print(estimate)
         return estimate
