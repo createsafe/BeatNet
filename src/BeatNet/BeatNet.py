@@ -142,19 +142,6 @@ class BeatNet:
         else:
             raise RuntimeError(f"{self.mode} is not supported or has been deprecated. Use 'offline' to process files.")
         
-        
-        # """
-        # Get beat estimates from tensors.
-
-        # Arguments: 
-        # audio (Tensor | Iterable[Tensor]): audio may be a [B, N] Tensor, or a list of Tensors
-
-        # processor.get_beats(BCT, input_stereo=True, sr=sr)
-        # processor.get_beats(CT, input_stereo=True, sr=sr)
-        # processor.get_beats(BT, sr=sr)
-        # processor.get_beats(T, sr=sr)
-        # """
-
 
     def get_beats(self, audio: Union[torch.Tensor, list[torch.Tensor]], sample_rate: int, is_stereo=False) -> Iterable[np.ndarray]:
         """Get beats from audio.
@@ -235,10 +222,11 @@ def worker(i: int, args_list: Iterable[tuple], queue: torch.multiprocessing.Queu
 
     Args:
         i (int): multiprocess worker index
-        args_list (Iterable[tuple]): list of tuples [(model: nn.Module, 
-                                                      features: torch.Tensor,
-                                                      estimator: madmom.features.downbeats.DBNDownBeatTrackingProcessor),
-                                                      ...]
+        args_list (Iterable[tuple]): list of tuples (see `predict` function)
+                ```[(model: BeatNet.model.BDA, 
+                            features: torch.Tensor,
+                            estimator: madmom.features.downbeats.DBNDownBeatTrackingProcessor),
+                            ...]```
         queue (torch.multiprocessing.Queue): queue on which to store results
     """
     args = args_list[i]
@@ -246,7 +234,17 @@ def worker(i: int, args_list: Iterable[tuple], queue: torch.multiprocessing.Queu
     result = predict(model, feats, estimator)
     queue.put(result)
 
-def predict(model, feats, estimator):
+def predict(model, feats: torch.Tensor, estimator) -> np.ndarray:
+    """Predict beat times and beat position
+
+    Args:
+        model (BeatNet.model.BDA): BeatNet novelty detection algorithm 
+        feats (torch.Tensor): log spectrogram 
+        estimator (madmom.features.downbeats.DBNDownBeatTrackingProcessor): HMM based downbeat estimation
+
+    Returns:
+        np.ndarray: 
+    """
     with torch.no_grad():
         # model, feats, estimator = args
         preds = model(feats)[0]
