@@ -141,21 +141,38 @@ class BeatNet:
                 raise RuntimeError("audio_path may be a str or a list of strings")
         else:
             raise RuntimeError(f"{self.mode} is not supported or has been deprecated. Use 'offline' to process files.")
+        
+        
+        # """
+        # Get beat estimates from tensors.
 
-    def get_beats(self, audio: Union[torch.Tensor, list[torch.Tensor]], sample_rate: int, is_stereo=False) -> np.ndarray:
+        # Arguments: 
+        # audio (Tensor | Iterable[Tensor]): audio may be a [B, N] Tensor, or a list of Tensors
+
+        # processor.get_beats(BCT, input_stereo=True, sr=sr)
+        # processor.get_beats(CT, input_stereo=True, sr=sr)
+        # processor.get_beats(BT, sr=sr)
+        # processor.get_beats(T, sr=sr)
+        # """
+
+
+    def get_beats(self, audio: Union[torch.Tensor, list[torch.Tensor]], sample_rate: int, is_stereo=False) -> Iterable[np.ndarray]:
+        """Get beats from audio.
+
+        Args:
+            audio (Union[torch.Tensor, list[torch.Tensor]]): audio as a `torch.Tensor` or as a list of `Tensors`
+            sample_rate (int): sampling frequency
+            is_stereo (bool, optional): is the audio stereo? Defaults to False.
+
+        Returns:
+            Iterable[np.ndarray]: a list of `numpy.ndarray`s, where each array is a list of times
+                                  (in seconds) paired with a beat position, where `1` is the downbeat
+
+        Note:
+            `audio` may have dimensions `[B,C,T]`, `[C,T]`, `[B,T]`, or `[T]`, where `B` is batch, 
+            `C` is channel and `T` is samples. 
 
         """
-        Get beat estimates from tensors.
-
-        Arguments: 
-        audio (Tensor | Iterable[Tensor]): audio may be a [B, N] Tensor, or a list of Tensors
-
-        processor.get_beats(BCT, input_stereo=True, sr=sr)
-        processor.get_beats(CT, input_stereo=True, sr=sr)
-        processor.get_beats(BT, sr=sr)
-        processor.get_beats(T, sr=sr)
-        """
-
         # Handle tensor dims
         if isinstance(audio, torch.Tensor):
             # BCT
@@ -210,7 +227,20 @@ class BeatNet:
 
         return results
 
-def worker(i, args_list, queue):
+def worker(i: int, args_list: Iterable[tuple], queue: torch.multiprocessing.Queue):
+    """Inference Worker
+
+    Used by `torch.multiprocessing.spawn` to initiate prediction on 
+    subprocesses.
+
+    Args:
+        i (int): multiprocess worker index
+        args_list (Iterable[tuple]): list of tuples [(model: nn.Module, 
+                                                      features: torch.Tensor,
+                                                      estimator: madmom.features.downbeats.DBNDownBeatTrackingProcessor),
+                                                      ...]
+        queue (torch.multiprocessing.Queue): queue on which to store results
+    """
     args = args_list[i]
     model, feats, estimator = args
     result = predict(model, feats, estimator)
