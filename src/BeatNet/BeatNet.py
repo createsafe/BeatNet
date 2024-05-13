@@ -198,29 +198,23 @@ class BeatNet:
         feats = feats.to(self.device)
 
         # apply model
-        # torch.multiprocessing.set_start_method('fork')
-        queue = torch.multiprocessing.Queue()
-        semaphore = torch.multiprocessing.Semaphore()
-        event = torch.multiprocessing.Event()
+        manager = torch.multiprocessing.Manager()
+        queue = manager.Queue()
+
         args = [(self.model, torch.unsqueeze(feats[i, :], dim=0), self.estimator) for i in range(feats.shape[0])]
-        # TODO: need to share results 
-        torch.multiprocessing.spawn(fn=worker, args=(args, queue, semaphore, event), nprocs=len(args), join=True, daemon=True)
+        torch.multiprocessing.spawn(fn=worker, args=(args,queue), nprocs=len(args), join=True, daemon=True)
         results = list()
         while not queue.empty():
             results.append(queue.get())
-        # with torch.multiprocessing.Pool(self.batch_size) as pool:
-        #     result = pool.map(func=predict, iterable=args)
-        pass
-        return 1
 
-def worker(i, args_list, queue, semaphore, event):
+
+        return results
+
+def worker(i, args_list, queue):
     args = args_list[i]
     model, feats, estimator = args
     result = predict(model, feats, estimator)
-    semaphore.acquire()
-    # queue.put(result)
-    semaphore.release()
-    event.set()
+    queue.put(result)
 
 def predict(model, feats, estimator):
     with torch.no_grad():
