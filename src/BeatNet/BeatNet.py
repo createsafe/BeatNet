@@ -243,7 +243,8 @@ def predict(model, feats: torch.Tensor, estimator) -> np.ndarray:
         estimator (madmom.features.downbeats.DBNDownBeatTrackingProcessor): HMM based downbeat estimation
 
     Returns:
-        np.ndarray: 
+        np.ndarray: where `result[:, 0]` are the beat times (in seconds) and 
+                    `result[:, 1]` are the beat positions, with `1` being the downbeat
     """
     with torch.no_grad():
         # model, feats, estimator = args
