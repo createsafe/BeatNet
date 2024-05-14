@@ -202,38 +202,27 @@ class BeatNet:
         feats = feats.to(self.device)
 
         # apply model
-        # TODO: replace with something like:
+        torch.multiprocessing.set_start_method("spawn")
 
-            # manager = mp.Manager()
-            # q = manager.Queue()
-            # p = mp.Process(target=test, args=(q,))
-            # p.start()
-            # p.join()
-
-            # print(q.get())
-
+        results = list()
         manager = torch.multiprocessing.Manager()
-        queue = manager.Queue()
         self.model.to(self.device)
 
-        # torch.multiprocessing.
+        args = [(self.model, torch.unsqueeze(feats[i, :], dim=0), self.estimator) for i in range(feats.shape[0])]
 
-        for i in range(feats.shape[0]):
-            p = torch.multiprocessing.Process(target=worker, args=((self.model, torch.unsqueeze(feats[i, :], dim=0), self.estimator), queue))
-            p.start()
-            p.join()
+        with torch.multiprocessing.Pool(processes=torch.cuda.device_count()) as pool:
+            results = pool.map(worker, args)
 
-        # args = [(self.model, torch.unsqueeze(feats[i, :], dim=0), self.estimator) for i in range(feats.shape[0])]
-        # torch.multiprocessing.spawn(fn=worker, args=(args,queue), nprocs=16, join=True, daemon=True)
-        results = list()
-        while not queue.empty():
-            results.append(queue.get())
-            print(results[-1])
+        # Close the pool
+        pool.close()
+
+        # Join the processes
+        pool.join()
 
 
         return results
 
-def worker(args: tuple, queue: torch.multiprocessing.Queue):
+def worker(args: tuple):
     """Inference Worker
 
     Used by `torch.multiprocessing.spawn` to initiate prediction on 
@@ -251,7 +240,7 @@ def worker(args: tuple, queue: torch.multiprocessing.Queue):
     # args = args_list[i]
     model, feats, estimator = args
     result = predict(model, feats, estimator)
-    queue.put(result)
+    return result
 
 def predict(model, feats: torch.Tensor, estimator) -> np.ndarray:
     """Predict beat times and beat position
