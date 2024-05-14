@@ -214,17 +214,26 @@ class BeatNet:
 
         manager = torch.multiprocessing.Manager()
         queue = manager.Queue()
+        self.model.to(self.device)
 
-        args = [(self.model, torch.unsqueeze(feats[i, :], dim=0), self.estimator) for i in range(feats.shape[0])]
-        torch.multiprocessing.spawn(fn=worker, args=(args,queue), nprocs=16, join=True, daemon=True)
+        # torch.multiprocessing.
+
+        for i in range(feats.shape[0]):
+            p = torch.multiprocessing.Process(target=worker, args=((self.model, torch.unsqueeze(feats[i, :], dim=0), self.estimator), queue))
+            p.start()
+            p.join()
+
+        # args = [(self.model, torch.unsqueeze(feats[i, :], dim=0), self.estimator) for i in range(feats.shape[0])]
+        # torch.multiprocessing.spawn(fn=worker, args=(args,queue), nprocs=16, join=True, daemon=True)
         results = list()
         while not queue.empty():
             results.append(queue.get())
+            print(results[-1])
 
 
         return results
 
-def worker(i: int, args_list: Iterable[tuple], queue: torch.multiprocessing.Queue):
+def worker(args: tuple, queue: torch.multiprocessing.Queue):
     """Inference Worker
 
     Used by `torch.multiprocessing.spawn` to initiate prediction on 
@@ -239,7 +248,7 @@ def worker(i: int, args_list: Iterable[tuple], queue: torch.multiprocessing.Queu
                             ...]```
         queue (torch.multiprocessing.Queue): queue on which to store results
     """
-    args = args_list[i]
+    # args = args_list[i]
     model, feats, estimator = args
     result = predict(model, feats, estimator)
     queue.put(result)
