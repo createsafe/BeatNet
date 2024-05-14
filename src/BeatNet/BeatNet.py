@@ -202,11 +202,21 @@ class BeatNet:
         feats = feats.to(self.device)
 
         # apply model
+        # TODO: replace with something like:
+
+            # manager = mp.Manager()
+            # q = manager.Queue()
+            # p = mp.Process(target=test, args=(q,))
+            # p.start()
+            # p.join()
+
+            # print(q.get())
+
         manager = torch.multiprocessing.Manager()
         queue = manager.Queue()
 
         args = [(self.model, torch.unsqueeze(feats[i, :], dim=0), self.estimator) for i in range(feats.shape[0])]
-        torch.multiprocessing.spawn(fn=worker, args=(args,queue), nprocs=len(args), join=True, daemon=True)
+        torch.multiprocessing.spawn(fn=worker, args=(args,queue), nprocs=16, join=True, daemon=True)
         results = list()
         while not queue.empty():
             results.append(queue.get())
