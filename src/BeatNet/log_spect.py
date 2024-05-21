@@ -91,10 +91,10 @@ def frequencies2bins(frequencies, bin_frequencies, unique_bins=False):
     # return the (unique) bin indices of the closest matches
     return indices
 
-def triangular_filter(channels, bins, fft_size, overlap=True, normalize=True):
+def triangular_filter(channels, bins, fft_size, overlap=True, normalize=True, device='cpu'):
     
     num_filters = len(bins) - 2
-    filters = torch.zeros(size=[num_filters, fft_size])
+    filters = torch.zeros(size=[num_filters, fft_size], device=device)
 
     for n in range(num_filters):
         # get start, center and stop bins
@@ -116,7 +116,7 @@ def triangular_filter(channels, bins, fft_size, overlap=True, normalize=True):
 
     filters = filters.repeat(channels, 1, 1)
 
-    return filters    
+    return filters
 
 def log_magnitude(spectrogram: torch.Tensor, 
                   mul: float,
@@ -134,7 +134,8 @@ class LOG_SPECT():
                  fmin: float=30,
                  fmax: float=17000,
                  channels: int=1,
-                 unique_bins: bool=True):
+                 unique_bins: bool=True,
+                 device="cpu"):
         
         self.sample_rate = sample_rate
         self.fft_size = win_length
@@ -143,6 +144,7 @@ class LOG_SPECT():
         self.fmax = fmax
         self.channels = channels
         self.unique_bins = unique_bins
+        self.device = device
         if isinstance(n_bands, Iterable):
             self.num_bands_per_octave = n_bands[0]
         else: 
@@ -166,10 +168,10 @@ class LOG_SPECT():
                                                                  n_fft=self.fft_size, 
                                                                  hop_length=self.hop_size,
                                                                  return_complex=True,
-                                                                 window=torch.hann_window(self.fft_size))
+                                                                 window=torch.hann_window(self.fft_size, device=self.device))
         self._fft_freqs = np.linspace(0, self.sample_rate/2, self.fft_size//2)
         self._bins = frequencies2bins(self.freqs, self._fft_freqs, self.unique_bins)
-        self._filters = triangular_filter(self.channels, self._bins, self.fft_size//2)
+        self._filters = triangular_filter(self.channels, self._bins, self.fft_size//2, device=self.device)
 
 
     def process_audio(self, signal: torch.Tensor):
@@ -182,7 +184,7 @@ class LOG_SPECT():
         spectrogram = spectrogram[:, :self.fft_size//2, :] 
         filtered = torch.matmul(self._filters, spectrogram)
         result = log_magnitude(filtered, 1, 1)
-        diff = torch.diff(result, dim=2, prepend=torch.zeros((result.shape[0], result.shape[1], 1)))
+        diff = torch.diff(result, dim=2, prepend=torch.zeros((result.shape[0], result.shape[1], 1), device=self.device))
         diff *= (diff > 0).to(diff.dtype)
         result = torch.cat((result, diff), dim=1)
         return result

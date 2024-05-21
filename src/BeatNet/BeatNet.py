@@ -73,7 +73,8 @@ class BeatNet:
                               win_length=self.log_spec_win_length,
                               hop_size=self.log_spec_hop_length, 
                               n_bands=[24], 
-                              channels=self.batch_size)
+                              channels=self.batch_size,
+                              device=device)
         if self.inference_model == "PF":                 # instantiating a Particle Filter decoder - Is Chosen for online inference
             self.estimator = particle_filter_cascade(beats_per_bar=[], fps=50, plot=self.plot, mode=self.mode)
         elif self.inference_model == "DBN":                # instantiating an HMM decoder - Is chosen for offline inference
@@ -202,7 +203,7 @@ class BeatNet:
         feats = feats.to(self.device)
 
         # apply model
-        torch.multiprocessing.set_start_method("spawn")
+        # torch.multiprocessing.set_start_method("spawn")
 
         results = list()
         manager = torch.multiprocessing.Manager()
@@ -219,6 +220,8 @@ class BeatNet:
         # Join the processes
         pool.join()
 
+        results = [torch.Tensor(result) for result in results]
+        results = torch.hstack(results)
 
         return results
 
@@ -235,7 +238,6 @@ def worker(args: tuple):
                             features: torch.Tensor,
                             estimator: madmom.features.downbeats.DBNDownBeatTrackingProcessor),
                             ...]```
-        queue (torch.multiprocessing.Queue): queue on which to store results
     """
     # args = args_list[i]
     model, feats, estimator = args
