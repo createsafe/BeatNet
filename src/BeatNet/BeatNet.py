@@ -14,12 +14,8 @@ from madmom.features import DBNDownBeatTrackingProcessor
 from BeatNet.particle_filtering_cascade import particle_filter_cascade
 from BeatNet.log_spect import LOG_SPECT
 import librosa
-import sys
 from BeatNet.model import BDA
 from BeatNet.bpm import beats2bpm
-import pyaudio
-import matplotlib.pyplot as plt
-import time
 import threading
 
 
@@ -86,6 +82,7 @@ class BeatNet:
             raise RuntimeError(f'Failed to open the trained model: {model}')
         self.model.eval()
         if self.mode == 'stream':
+            import pyaudio
             self.stream_window = np.zeros(self.log_spec_win_length + 2 * self.log_spec_hop_length, dtype=np.float32)                                          
             self.stream = pyaudio.PyAudio().open(format=pyaudio.paFloat32,
                                              channels=1,
