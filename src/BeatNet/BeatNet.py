@@ -8,8 +8,10 @@
 import os
 from typing import Iterable, Union
 import torch
+import torch.multiprocessing.spawn
 import torchaudio
 import numpy as np
+import matplotlib.pyplot as plt
 from madmom.features import DBNDownBeatTrackingProcessor
 from BeatNet.particle_filtering_cascade import particle_filter_cascade
 from BeatNet.log_spect import LOG_SPECT
@@ -17,6 +19,7 @@ import librosa
 from BeatNet.model import BDA
 from BeatNet.bpm import beats2bpm
 import threading
+from BeatNet.utils import zero_pad_cat
 
 
 class BeatNet:
@@ -41,27 +44,33 @@ class BeatNet:
                 Note that to speedup plotting the figures, rather than new plots per frame, the previous plots get updated. However, to secure realtime results, it is recommended to not plot or have as less number of plots as possible at the time.   
             threading: To decide whether accomplish the inference at the main thread or another thread. 
             device: type of dvice. cpu or cuda:i
+            batch_size: initial number of inputs to process in parallel
 
         Outputs:
             A vector including beat times and downbeat identifier columns, respectively with the following shape: numpy_array(num_beats, 2).
     '''
     
     
-    def __init__(self, model, mode='online', inference_model='PF', plot=[], thread=False, device='cpu'):
+    def __init__(self, model, mode='offline', inference_model='PF', plot=[], thread=False, device='cpu', batch_size=1):
         self.model = model
         self.mode = mode
         self.inference_model = inference_model
         self.plot= plot
         self.thread = thread
         self.device = device
+        self.batch_size = batch_size
         if plot and thread:
             raise RuntimeError('Plotting cannot be accomplished in the threading mode')
         self.sample_rate = 22050
         self.log_spec_sample_rate = self.sample_rate
         self.log_spec_hop_length = int(20 * 0.001 * self.log_spec_sample_rate)
         self.log_spec_win_length = int(64 * 0.001 * self.log_spec_sample_rate)
-        self.proc = LOG_SPECT(sample_rate=self.log_spec_sample_rate, win_length=self.log_spec_win_length,
-                             hop_size=self.log_spec_hop_length, n_bands=[24], mode = self.mode)
+        self.proc = LOG_SPECT(sample_rate=self.log_spec_sample_rate, 
+                              win_length=self.log_spec_win_length,
+                              hop_size=self.log_spec_hop_length, 
+                              n_bands=[24], 
+                              channels=self.batch_size,
+                              device=device)
         if self.inference_model == "PF":                 # instantiating a Particle Filter decoder - Is Chosen for online inference
             self.estimator = particle_filter_cascade(beats_per_bar=[], fps=50, plot=self.plot, mode=self.mode)
         elif self.inference_model == "DBN":                # instantiating an HMM decoder - Is chosen for offline inference
@@ -90,157 +99,167 @@ class BeatNet:
                                              input=True,
                                              frames_per_buffer=self.log_spec_hop_length,)
                                              
-    def process(self, audio_path: str=None, with_bpm: bool=False) -> Union[np.ndarray, tuple[np.ndarray, float]]: 
+
+    def process(self, audio_path: Union[str, list[str]]=None):   
         """
-        Extract beats and optionally bpm
+        Offline beat estimation.
 
         Arguments:
-        audio_path (str): 'path/to/audio.wav'
-        with_bpm (bool): if true, returns tuple (beats, bpm)
-                         if false, returns beats
+        audio_path (str | list[str]): "path/to/audio" or list of paths to audio
         """
-        if self.mode == "stream":
-            if self.inference_model != "PF":
-                    raise RuntimeError('The infernece model should be set to "PF" for the streaming mode!')
-            self.counter = 0
-            while self.stream.is_active():
-                self.activation_extractor_stream()  # Using BeatNet causal Neural network streaming mode to extract activations
-                if self.thread:
-                    x = threading.Thread(target=self.estimator.process, args=(self.pred), daemon=True)   # Processing the inference in another thread 
-                    x.start()
-                    x.join()    
-                else:
-                    output = self.estimator.process(self.pred)
-                self.counter += 1
 
-                
-        elif self.mode == "realtime":
-            self.counter = 0
-            self.completed = 0
-            if self.inference_model != "PF":
-                raise RuntimeError('The infernece model for the streaming mode should be set to "PF".')
-            if isinstance(audio_path, str) or audio_path.all()!=None:
-                while self.completed == 0:
-                    self.activation_extractor_realtime(audio_path) # Using BeatNet causal Neural network realtime mode to extract activations
-                    if self.thread:
-                        x = threading.Thread(target=self.estimator.process, args=(self.pred), daemon=True)   # Processing the inference in another thread 
-                        x.start()
-                        x.join()    
-                    else:
-                        output = self.estimator.process(self.pred)  # Using particle filtering online inference to infer beat/downbeats
-                    self.counter += 1
-            else:
-                raise RuntimeError('An audio object or file directory is required for the realtime usage!')
-        
-        
-        elif self.mode == "online":
-            if isinstance(audio_path, str) or audio_path.all()!=None:
-                preds = self.activation_extractor_online(audio_path)    # Using BeatNet causal Neural network to extract activations
-            else:
-                raise RuntimeError('An audio object or file directory is required for the online usage!')
-            if self.inference_model == "PF":   # Particle filtering inference (causal)
-                output = self.estimator.process(preds)  # Using particle filtering online inference to infer beat/downbeats
-            elif self.inference_model == "DBN":    # Dynamic bayesian Network Inference (non-causal)
-                output = self.estimator(preds)  # Using DBN offline inference to infer beat/downbeats
+        if isinstance(audio_path, str) and (not self.batch_size == 1):
+            raise RuntimeError('If `audio_path` is to a single file, `batch_size` must be 1')
+        elif isinstance(audio_path, list):
+            assert len(audio_path) == self.batch_size, f"Number of audio files ({len(audio_path)}) must equal `batch_size` ({self.batch_size})"
 
-        
-        
-        elif self.mode == "offline":
+        if self.mode == "offline":
             if self.inference_model != "DBN":
                 raise RuntimeError('The infernece model should be set to "DBN" for the offline mode!')
-            if isinstance(audio_path, str) or audio_path.all()!=None:
-                preds = self.activation_extractor_online(audio_path)    # Using BeatNet causal Neural network to extract activations
-                output = self.estimator(preds)  # Using DBN offline inference to infer beat/downbeats
-            else:
-                raise RuntimeError('An audio object or file directory is required for the offline usage!')
-            
-        if with_bpm:
-            bpm = beats2bpm(beats=output[:, 0])
-            return output, bpm
-        else:
-            return output
-                
-
-    def activation_extractor_stream(self):
-        # TODO: 
-        ''' Streaming window
-        Given the training input window's origin set to center, this streaming data formation causes 0.084 (s) delay compared to the trained model that needs to be fixed. 
-        '''
-        with torch.no_grad():
-            hop = self.stream.read(self.log_spec_hop_length)
-            hop = np.frombuffer(hop, dtype=np.float32)
-            self.stream_window = np.append(self.stream_window[self.log_spec_hop_length:], hop)
-            if self.counter < 5:
-                self.pred = np.zeros([1,2])
-            else:
-                feats = self.proc.process_audio(self.stream_window).T[-1]
-                feats = torch.from_numpy(feats)
-                feats = feats.unsqueeze(0).unsqueeze(0).to(self.device)
-                pred = self.model(feats)[0]
-                pred = self.model.final_pred(pred)
-                pred = pred.cpu().detach().numpy()
-                self.pred = np.transpose(pred[:2, :])
-
-
-    def activation_extractor_realtime(self, audio_path):
-        with torch.no_grad():
-            if self.counter==0: #loading the audio
-                if isinstance(audio_path, str):
-                    self.audio, _ = librosa.load(audio_path, sr=self.sample_rate)  # reading the data
-                elif len(np.shape(audio_path))>1:
-                    self.audio = np.mean(audio_path ,axis=1)
-                else:
-                    self.audio = audio_path
-            if self.counter<(round(len(self.audio)/self.log_spec_hop_length)):
-                if self.counter<2:
-                    self.pred = np.zeros([1,2])
-                else:
-                    feats = self.proc.process_audio(self.audio[self.log_spec_hop_length * (self.counter-2):self.log_spec_hop_length * (self.counter) + self.log_spec_win_length]).T[-1]
-                    feats = torch.from_numpy(feats)
-                    feats = feats.unsqueeze(0).unsqueeze(0).to(self.device)
-                    pred = self.model(feats)[0]
-                    pred = self.model.final_pred(pred)
-                    pred = pred.cpu().detach().numpy()
-                    self.pred = np.transpose(pred[:2, :])
-            else:
-                self.completed = 1
-
-
-    def activation_extractor_online(self, audio_path):
-        with torch.no_grad():
             if isinstance(audio_path, str):
-            	audio, _ = librosa.load(audio_path, sr=self.sample_rate)  # reading the data
-            elif len(np.shape(audio_path))>1:
-                audio = np.mean(audio_path ,axis=1)
-            else:
-                audio = audio_path
-            feats = self.proc.process_audio(audio).T
-            feats = torch.from_numpy(feats)
-            feats = feats.unsqueeze(0).to(self.device)
-            preds = self.model(feats)[0]  # extracting the activations by passing the feature through the NN
-            preds = self.model.final_pred(preds)
-            preds = preds.cpu().detach().numpy()
-            preds = np.transpose(preds[:2, :])
-        return preds
-
-    def process_offline(self, audio: Iterable, sample_rate: int, with_bpm: bool=False) -> Union[np.ndarray, tuple[np.ndarray, float]]:
-        with torch.no_grad():
-            if sample_rate != self.sample_rate and isinstance(audio, np.ndarray):
-                audio = librosa.resample(y=audio, orig_sr=sample_rate, target_sr=self.sample_rate)
-            elif sample_rate != self.sample_rate and isinstance(audio, torch.Tensor):
-                audio = torchaudio.functional.resample(waveform=audio, orig_freq=sample_rate, new_freq=self.sample_rate)
-                
-            feats = self.proc.process_audio(audio).T
-            feats = torch.from_numpy(feats)
-            feats = feats.unsqueeze(0).to(self.device)
-            preds = self.model(feats)[0]  # extracting the activations by passing the feature through the NN
-            preds = self.model.final_pred(preds)
-            preds = preds.cpu().detach().numpy()
-            preds = np.transpose(preds[:2, :])
-            beats = self.estimator(preds)
-
-            if with_bpm:
-                bpm = beats2bpm(beats=beats[:, 0])
-                return beats, bpm
-            else:
+                audio, sample_rate = torchaudio.load(audio_path)
+                audio = torch.unsqueeze(torch.mean(audio, dim=0), dim=0)
+                beats = self.get_beats(audio, sample_rate)
                 return beats
+            elif all(isinstance(item, str) for item in audio_path):
+                # get all files
+                audios = list()
+                sample_rates = list()
+                for path in audio_path:
+                    audio, sample_rate = torchaudio.load(path)
+                    audio = torch.unsqueeze(torch.mean(audio, dim=0), dim=0)
+                    audios.append(audio)
+                    sample_rates.append(sample_rate)
+                if not all(sample_rates[0] == rate for rate in sample_rates):
+                    ValueError("All samplerates must be the same.")
+                audios = zero_pad_cat(audios)
+                beats = self.get_beats(audios, sample_rates[0])
+                return beats
+            else:
+                raise RuntimeError("audio_path may be a str or a list of strings")
+        else:
+            raise RuntimeError(f"{self.mode} is not supported or has been deprecated. Use 'offline' to process files.")
+        
+
+    def get_beats(self, audio: Union[torch.Tensor, list[torch.Tensor]], sample_rate: int, is_stereo=False) -> Iterable[np.ndarray]:
+        """Get beats from audio.
+
+        Args:
+            audio (Union[torch.Tensor, list[torch.Tensor]]): audio as a `torch.Tensor` or as a list of `Tensors`
+            sample_rate (int): sampling frequency
+            is_stereo (bool, optional): is the audio stereo? Defaults to False.
+
+        Returns:
+            Iterable[np.ndarray]: a list of `numpy.ndarray`s, where each array is a list of times
+                                  (in seconds) paired with a beat position, where `1` is the downbeat
+
+        Note:
+            `audio` may have dimensions `[B,C,T]`, `[C,T]`, `[B,T]`, or `[T]`, where `B` is batch, 
+            `C` is channel and `T` is samples. 
+
+        """
+        # Handle tensor dims
+        if isinstance(audio, torch.Tensor):
+            # BCT
+            if audio.dim() == 3:
+                buffer = torch.Tensor()
+                if is_stereo:
+                    assert audio.shape[1] % 2 == 0, f"if `audio` has shape [B,C,T], and `is_stereo` is True, `audio.shape[1]` must be even."
+                    buffer = torch.zeros(size=(audio.shape[0] * (audio.shape[1] // 2), audio.shape[2]))
+                    audio = audio.reshape(shape=(audio.shape[0] * audio.shape[1], audio.shape[2]))
+                    for n in range(0, audio.shape[0], 2):
+                        buffer[n//2, :] = torch.mean(audio[n:n+1, :])
+                    audio = buffer
+                if not is_stereo:
+                    audio = audio.reshape(shape=(audio.shape[0] * audio.shape[1], audio.shape[2]))
+            # CT
+            elif audio.dim() == 2 and is_stereo:
+                buffer = torch.zeros(size=(audio.shape[0]//2, audio.shape[1]))
+                for n in range(0, audio.shape[0], 2):
+                    buffer[n//2, :] = torch.mean(audio[n:n+1, :])
+                audio = buffer
+            # T
+            elif audio.dim() == 1:
+                audio = torch.unsqueeze(audio, dim=0)
+            elif audio.dim() > 3:
+                RuntimeError(f"`audio` must be a `torch.Tensor` with 1, 2, or 3 dimensions.")
+        # handle tensor list
+        elif isinstance(audio, list):
+            audio = zero_pad_cat(audio)
+        else:
+            RuntimeError(f"`audio` is {type(audio)}, but must be `torch.Tensor` or `list[torch.Tensor]`")
+
+        assert audio.dim() == 2
+
+        if sample_rate != self.sample_rate:
+            audio = torchaudio.functional.resample(waveform=audio, orig_freq=sample_rate, new_freq=self.sample_rate)
+        
+        # apply preprocessing
+        feats = self.proc.process_audio(audio).T
+        feats = torch.permute(feats, (2, 0, 1))
+        feats = feats.to(self.device)
+
+        # apply model
+        # torch.multiprocessing.set_start_method("spawn")
+
+        results = list()
+        manager = torch.multiprocessing.Manager()
+        self.model.to(self.device)
+
+        args = [(self.model, torch.unsqueeze(feats[i, :], dim=0), self.estimator) for i in range(feats.shape[0])]
+
+        with torch.multiprocessing.Pool(processes=torch.cuda.device_count()) as pool:
+            results = pool.map(worker, args)
+
+        # Close the pool
+        pool.close()
+
+        # Join the processes
+        pool.join()
+
+        results = [torch.Tensor(result) for result in results]
+        results = torch.hstack(results)
+
+        return results
+
+def worker(args: tuple):
+    """Inference Worker
+
+    Used by `torch.multiprocessing.spawn` to initiate prediction on 
+    subprocesses.
+
+    Args:
+        i (int): multiprocess worker index
+        args_list (Iterable[tuple]): list of tuples (see `predict` function)
+                ```[(model: BeatNet.model.BDA, 
+                            features: torch.Tensor,
+                            estimator: madmom.features.downbeats.DBNDownBeatTrackingProcessor),
+                            ...]```
+    """
+    # args = args_list[i]
+    model, feats, estimator = args
+    result = predict(model, feats, estimator)
+    return result
+
+def predict(model, feats: torch.Tensor, estimator) -> np.ndarray:
+    """Predict beat times and beat position
+
+    Args:
+        model (BeatNet.model.BDA): BeatNet novelty detection algorithm 
+        feats (torch.Tensor): log spectrogram 
+        estimator (madmom.features.downbeats.DBNDownBeatTrackingProcessor): HMM based downbeat estimation
+
+    Returns:
+        np.ndarray: where `result[:, 0]` are the beat times (in seconds) and 
+                    `result[:, 1]` are the beat positions, with `1` being the downbeat
+    """
+    with torch.no_grad():
+        # model, feats, estimator = args
+        preds = model(feats)[0]
+        preds = model.final_pred(preds)
+        # TODO: remove madmom dependency in DBNDownbeatTrackingProcessor
+        preds = preds.cpu().detach().numpy()
+        preds = np.transpose(preds[:2, :])
+        estimate = estimator(preds)
+        # print(estimate)
+        return estimate

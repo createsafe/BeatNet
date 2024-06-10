@@ -53,18 +53,20 @@ A vector including beats and downbeats columns, respectively with the following 
 
 Input Parameters:
 -------------
-model: An scalar in the range [1,3] to select which pre-trained CRNN models to utilize.
+`model`: An scalar in the range [1,3] to select which pre-trained CRNN models to utilize.
 
-mode: An string to determine the working mode. i.e. 'stream', 'realtime', 'online' and 'offline'.
+`mode`: An string to determine the working mode, of whcih only `offline` is supproted
 
-inference model: A string to choose the inference approach. i.e. 'PF' standing for Particle Filtering for causal inferences and 'DBN' standing for Dynamic Bayesian Network for non-causal usages.
+`inference model`: A string to choose the inference approach. i.e. 'PF' standing for Particle Filtering for causal inferences and 'DBN' standing for Dynamic Bayesian Network for non-causal usages.
 
-plot: A list of strings to plot. It can include 'activations', 'beat_particles' and 'downbeat_particles'
+`plot`: A list of strings to plot. It can include 'activations', 'beat_particles' and 'downbeat_particles'
 Note that to speed up plotting the figures, rather than new plots per frame, the previous plots get updated. However, to secure realtime results, it is recommended to not        plot or have as less number of plots as possible at the time.
 
-thread: To decide whether accomplish the inference at the main thread or another thread.
+`thread`: To decide whether accomplish the inference at the main thread or another thread.
 
-device: Type of device being used. Cuda or cpu (by default).
+`device`: Type of device being used. Cuda or cpu (by default).
+
+`batch_size`: The number of files to be processed at once. Alternatively, the size of the first dimension for any `torch.Tensor` input.
 
 Installation command:
 ---------------------
@@ -87,78 +89,62 @@ and
 pip install <Pyaduio_file_name.whl>     
 ```
 
-Usage example 1 (Streaming mode):
---------------
-```
+Usage:
+------
+
+Can be used on audio files or `torch.Tensors`.
+
+#### Audio Files
+```python
 from BeatNet.BeatNet import BeatNet
 
-estimator = BeatNet(1, mode='stream', inference_model='PF', plot=[], thread=False)
-
-Output = estimator.process()
+files = [
+  "path/to/audio.mp3",
+  "path/to/more.mp3"
+]
+num_files = 2
+estimator = BeatNet(1, mode='offline', inference_model='DBN', plot=[], thread=false, batch_size=num_files)
+beats = estimator.process(files)
 ```
-*In streaming usage cases, make sure to feed the system with as loud input as possible to leverage the maximum streaming performance, given all models are trained on the datasets containing mastered songs.
 
-Usage example 2 (Realtime mode):
---------------
-```
+#### Audio Tensors
+```python
 from BeatNet.BeatNet import BeatNet
+from BeatNet.utils import zero_pad_cat
 
-estimator = BeatNet(1, mode='realtime', inference_model='PF', plot=['beat_particles'], thread=False)
+files = [
+  "path/to/audio.mp3",
+  "path/to/more.mp3"
+]
+num_files = len(files)
 
-Output = estimator.process("audio file directory")
+# load audio to memory
+audio = list()
+sample_rates = list()
+for file in files:
+    signal, sample_rate = torchaudio.load(file)
+    signal = torch.unsqueeze(torch.mean(signal, dim=0), dim=0)
+    audio.append(signal)
+    sample_rates.append(sample_rate)
+
+# check sample rates
+if not all(sample_rates[0] == rate for rate in sample_rates):
+    ValueError("All samplerates must be the same.")
+else:
+    sample_rate = sample_rates[0]
+
+# stack audio by zero padding into a [B, N] tensor,
+# where B is the number of files and N is the number of samples
+audio = zero_pad_cat(audio)
+
+# spawn estimator
+estimator = BeatNet(1, mode='offline', inference_model='DBN', plot=[], thread=false, batch_size=num_files)
+
+# infer beats
+beats = estimator.get_beats(audio=audio, sample_rate=sample_rate)
+
 ```
 
-Usage example 3 (Online mode):
---------------
-```
-from BeatNet.BeatNet import BeatNet
-
-estimator = BeatNet(1, mode='online', inference_model='PF', plot=['activations'], thread=False)
-
-Output = estimator.process("audio file directory")
-```
-Usage example 4 (Offline mode):
---------------
-```
-from BeatNet.BeatNet import BeatNet
-
-estimator = BeatNet(1, mode='offline', inference_model='DBN', plot=[], thread=False)
-
-Output = estimator.process("audio file directory")
-```
-
-Video Tutorial:
-------------
-1: In this tutorial, we explain the BeatNet mechanism.  
-
-
-[![Easy song](https://img.youtube.com/vi/xOX74cXQKrY/0.jpg)](https://youtu.be/xOX74cXQKrY)
-
-___________________________________________________________________
-
-Video Demos:
-------------
-In order to demonstrate the performance of the system for different beat/donbeat tracking difficulties, here are three video demo examples :
-
-1: Song Difficulty: Easy
-  
-  
-[![Easy song](https://img.youtube.com/vi/XsdA4AATaUY/0.jpg)](https://www.youtube.com/watch?v=XsdA4AATaUY)
-  
-
-
-
-2: Song difficulty: Medium
-  
-  [![Easy song](https://img.youtube.com/vi/GuW8C5xuWbQ/0.jpg)](https://www.youtube.com/watch?v=GuW8C5xuWbQ)
-  
-
-
-
-
-3: Song difficulty: Veteran
-  
-  [![Easy song](https://img.youtube.com/vi/dFbFGMs9CA4/0.jpg)](https://www.youtube.com/watch?v=dFbFGMs9CA4)
   
 
 Acknowledgements:
