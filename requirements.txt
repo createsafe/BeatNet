@@ -1,0 +1,9 @@
+Cython
+numpy
+scipy
+librosa
+torch
+mido
+matplotlib
+pytest
+# madmom@git+https://github.com/CPJKU/madmom
