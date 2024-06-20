@@ -199,67 +199,13 @@ class BeatNet:
         feats = torch.permute(feats, (2, 0, 1))
         feats = feats.to(self.device)
 
-        # apply model
-        # torch.multiprocessing.set_start_method("spawn")
-
-        results = list()
-        manager = torch.multiprocessing.Manager()
-        self.model.to(self.device)
-
-        args = [(self.model, torch.unsqueeze(feats[i, :], dim=0), self.estimator) for i in range(feats.shape[0])]
-
-        with torch.multiprocessing.Pool(processes=torch.cuda.device_count()) as pool:
-            results = pool.map(worker, args)
-
-        # Close the pool
-        pool.close()
-
-        # Join the processes
-        pool.join()
-
-        results = [torch.Tensor(result) for result in results]
-        results = torch.hstack(results)
-
-        return results
-
-def worker(args: tuple):
-    """Inference Worker
-
-    Used by `torch.multiprocessing.spawn` to initiate prediction on 
-    subprocesses.
-
-    Args:
-        i (int): multiprocess worker index
-        args_list (Iterable[tuple]): list of tuples (see `predict` function)
-                ```[(model: BeatNet.model.BDA, 
-                            features: torch.Tensor,
-                            estimator: madmom.features.downbeats.DBNDownBeatTrackingProcessor),
-                            ...]```
-    """
-    # args = args_list[i]
-    model, feats, estimator = args
-    result = predict(model, feats, estimator)
-    return result
-
-def predict(model, feats: torch.Tensor, estimator) -> np.ndarray:
-    """Predict beat times and beat position
-
-    Args:
-        model (BeatNet.model.BDA): BeatNet novelty detection algorithm 
-        feats (torch.Tensor): log spectrogram 
-        estimator (madmom.features.downbeats.DBNDownBeatTrackingProcessor): HMM based downbeat estimation
-
-    Returns:
-        np.ndarray: where `result[:, 0]` are the beat times (in seconds) and 
-                    `result[:, 1]` are the beat positions, with `1` being the downbeat
-    """
-    with torch.no_grad():
-        # model, feats, estimator = args
-        preds = model(feats)[0]
-        preds = model.final_pred(preds)
+        preds = self.model(feats)[0]
+        preds = self.model.final_pred(preds)
         # TODO: remove madmom dependency in DBNDownbeatTrackingProcessor
         preds = preds.cpu().detach().numpy()
         preds = np.transpose(preds[:2, :])
-        estimate = estimator(preds)
-        # print(estimate)
-        return estimate
+        results = self.estimator(preds)
+
+        results = torch.Tensor(results)
+
+        return results
