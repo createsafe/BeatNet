@@ -205,23 +205,32 @@ class BeatNet:
         # apply model
         # torch.multiprocessing.set_start_method("spawn")
 
-        results = list()
-        manager = torch.multiprocessing.Manager()
-        self.model.to(self.device)
+        # results = list()
+        # manager = torch.multiprocessing.Manager()
+        # self.model.to(self.device)
 
-        args = [(self.model, torch.unsqueeze(feats[i, :], dim=0), self.estimator) for i in range(feats.shape[0])]
+        # args = [(self.model, torch.unsqueeze(feats[i, :], dim=0), self.estimator) for i in range(feats.shape[0])]
 
-        with torch.multiprocessing.Pool(processes=torch.cuda.device_count()) as pool:
-            results = pool.map(worker, args)
+        # with torch.multiprocessing.Pool(processes=torch.cuda.device_count()) as pool:
+        #     results = pool.map(worker, args)
 
-        # Close the pool
-        pool.close()
+        # # Close the pool
+        # pool.close()
 
-        # Join the processes
-        pool.join()
+        # # Join the processes
+        # pool.join()
 
-        results = [torch.Tensor(result) for result in results]
-        results = torch.hstack(results)
+        preds = self.model(feats)[0]
+        preds = self.model.final_pred(preds)
+        # TODO: remove madmom dependency in DBNDownbeatTrackingProcessor
+        preds = preds.cpu().detach().numpy()
+        preds = np.transpose(preds[:2, :])
+        results = self.estimator(preds)
+
+        results = torch.Tensor(results)
+
+        # results = [torch.Tensor(result) for result in results]
+        # results = torch.hstack(results)
 
         return results
 
