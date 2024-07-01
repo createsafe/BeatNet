@@ -31,8 +31,8 @@ class BDA(nn.Module):  #beat_downbeat_activation
 
         self.softmax = nn.Softmax(dim=0)
         # Initialize the hidden state and cell state
-        self.hidden = torch.zeros(2, 2, self.dim_hd).to(device)
-        self.cell = torch.zeros(2, 2, self.dim_hd).to(device)
+        self.hidden = torch.zeros(2, 1, self.dim_hd).to(device)
+        self.cell = torch.zeros(2, 1, self.dim_hd).to(device)
 
         self.to(device)
 
